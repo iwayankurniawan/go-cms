@@ -1,84 +1,91 @@
 package main
 
 import (
-	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
-	"strconv"
+	"os"
+
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/dynamodb"
+	"github.com/aws/aws-sdk-go/service/dynamodb/dynamodbattribute"
+	"github.com/iwayankurniawan/gocms/models"
+	"github.com/joho/godotenv"
 
 	"github.com/gorilla/mux"
 )
 
-type Content struct {
-	Id   int
-	Text string
+func readContent(w http.ResponseWriter, r *http.Request) {
+	godotenv.Load(".env")
+	// create an aws session
+	sess, err := session.NewSession(&aws.Config{
+		Region:      aws.String("eu-north-1"),
+		Credentials: credentials.NewStaticCredentials(os.Getenv("aws_access_key_id"), os.Getenv("aws_secret_access_key"), ""),
+	},
+	)
+
+	// Create DynamoDB client
+	svc := dynamodb.New(sess)
+
+	params := mux.Vars(r)
+	id := params["id"]
+	item := models.Content{}
+
+	result, err := svc.GetItem(&dynamodb.GetItemInput{
+		TableName: aws.String("content"), //table name
+		Key: map[string]*dynamodb.AttributeValue{
+			"id": {
+				S: aws.String(id),
+			},
+		},
+	})
+
+	if err != nil {
+		log.Fatalf("Got error calling GetItem: %s", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		response := models.Response{Status: http.StatusInternalServerError, Message: "Got error calling GetItem", Data: map[string]interface{}{"data": err.Error()}}
+		json.NewEncoder(w).Encode(response)
+	}
+
+	err = dynamodbattribute.UnmarshalMap(result.Item, &item)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to unmarshal Record, %v", err))
+	}
+
+	if item.Text == "" {
+		fmt.Println("Could not find data")
+		w.WriteHeader(http.StatusOK)
+		response := models.Response{Status: http.StatusInternalServerError, Message: "Could not find data", Data: map[string]interface{}{"data": ""}}
+		json.NewEncoder(w).Encode(response)
+		return
+	}
+
+	fmt.Println("Found item:")
+	fmt.Println("Id:  ", item.Id)
+	fmt.Println("Text: ", item.Text)
+
+	w.WriteHeader(http.StatusOK)
+	response := models.Response{Status: http.StatusOK, Message: "success", Data: map[string]interface{}{"data": item}}
+	json.NewEncoder(w).Encode(response)
 }
 
 func createContent(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	title := vars["title"]
-	page := vars["page"]
+	params := mux.Vars(r)
+	id := params["id"]
+	content := models.Content{Id: id, Text: "Hello Yorobun"}
 
-	fmt.Fprintf(w, "You've requested the book: %s on page %s\n", title, page)
-}
-
-func readContent(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	id, err := strconv.Atoi(vars["id"])
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid product ID")
-		return
-	}
-
-	if err := id; err != nil {
-		switch err {
-		case sql.ErrNoRows:
-			respondWithError(w, http.StatusNotFound, "Product not found")
-		default:
-			respondWithError(w, http.StatusInternalServerError, err.Error())
-		}
-		return
-	}
-
-	respondWithJSON(w, http.StatusOK, p)
-}
-
-func deleteContent(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	title := vars["title"]
-	page := vars["page"]
-
-	fmt.Fprintf(w, "You've requested the book: %s on page %s\n", title, page)
-}
-
-func updateContent(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	title := vars["title"]
-	page := vars["page"]
-
-	fmt.Fprintf(w, "You've requested the book: %s on page %s\n", title, page)
-}
-
-func respondWithError(w http.ResponseWriter, code int, message string) {
-	respondWithJSON(w, code, map[string]string{"error": message})
-}
-
-func respondWithJSON(w http.ResponseWriter, code int, payload interface{}) {
-	response, _ := json.Marshal(payload)
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(code)
-	w.Write(response)
+	w.WriteHeader(http.StatusOK)
+	response := models.Response{Status: http.StatusOK, Message: "success", Data: map[string]interface{}{"data": content}}
+	json.NewEncoder(w).Encode(response)
 }
 
 func main() {
 	r := mux.NewRouter()
 
-	r.HandleFunc("/project", createContent).Methods("POST")
 	r.HandleFunc("/project/{id}", readContent).Methods("GET")
-	r.HandleFunc("/project/{id}", deleteContent).Methods("DELETE")
-	r.HandleFunc("/project/{id}", updateContent).Methods("PUT")
 
-	http.ListenAndServe(":80", r)
+	http.ListenAndServe(":8000", r)
 }
